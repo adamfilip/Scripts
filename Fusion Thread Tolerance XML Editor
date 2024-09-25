@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Thread XML Editor with Dynamic Tolerance Adjustment</title>
+    <style>
+        /* Enhanced CSS for a more friendly UI */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .controls {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .controls label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .controls input[type="text"], .controls input[type="file"] {
+            width: calc(100% - 120px);
+            padding: 8px;
+            margin-left: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .controls .button-group {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            background-color: #5A67D8;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s ease;
+        }
+        .controls button:hover {
+            background-color: #434190;
+        }
+        .controls button.reset-btn {
+            background-color: #E53E3E;
+        }
+        .controls button.reset-btn:hover {
+            background-color: #C53030;
+        }
+        #editor fieldset {
+            background-color: #fff;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #editor legend {
+            font-weight: bold;
+            padding: 0 10px;
+        }
+        #editor table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #editor th, #editor td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        #editor th {
+            background-color: #f0f0f0;
+        }
+        .thread-section {
+            margin-bottom: 20px;
+        }
+        .difference {
+            color: #555;
+            font-weight: bold;
+        }
+        @media (max-width: 600px) {
+            .controls input[type="text"], .controls input[type="file"] {
+                width: 100%;
+                margin-left: 0;
+            }
+            .controls label {
+                margin-bottom: 15px;
+            }
+            .controls .button-group {
+                flex-direction: column;
+            }
+            .controls button {
+                width: 100%;
+            }
+            #editor table, #editor th, #editor td {
+                font-size: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<h1>Thread XML Editor with Dynamic Tolerance Adjustment</h1>
+<div class="controls">
+    <label>
+        Choose XML File:
+        <input type="file" id="fileInput" accept=".xml" />
+    </label>
+    <label>
+        Profile Name:
+        <input type="text" id="profileNameInput" value="ISO Metric profile" />
+    </label>
+    <label>
+        Tolerance (mm):
+        <input type="text" id="toleranceInput" value="0.5" />
+    </label>
+    <div class="button-group">
+        <button id="applyToleranceBtn" style="display:none;">Apply Tolerance</button>
+        <button id="saveBtn" style="display:none;">Save Changes</button>
+        <button id="resetBtn" style="display:none;" class="reset-btn">Reset</button>
+    </div>
+</div>
+<div id="editor"></div>
+
+<script>
+    let xmlDoc;
+    let originalXmlDoc; // To store the original XML for reset
+    let fileName = 'updated_thread.xml';
+    let toleranceValue = 0;
+
+    // Load the XML file
+    document.getElementById('fileInput').addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        fileName = file.name.replace('.xml', '_edited.xml');
+        const reader = new FileReader();
+        reader.onload = function (event) {
+            const xmlData = event.target.result;
+            const parser = new DOMParser();
+            const parsedXml = parser.parseFromString(xmlData, "application/xml");
+
+            // Check for XML parsing errors
+            const parserError = parsedXml.getElementsByTagName("parsererror");
+            if (parserError.length > 0) {
+                alert("Error parsing XML file. Please ensure the file is well-formed.");
+                return;
+            }
+
+            xmlDoc = parsedXml;
+            originalXmlDoc = parsedXml.cloneNode(true); // Clone for reset
+
+            // Build the form dynamically based on the XML content
+            buildEditor(xmlDoc);
+            document.getElementById('applyToleranceBtn').style.display = 'inline-block';
+            document.getElementById('saveBtn').style.display = 'inline-block';
+            document.getElementById('resetBtn').style.display = 'inline-block';
+
+            // Set the Profile Name input to the current Name or CustomName
+            const threadType = xmlDoc.getElementsByTagName("ThreadType")[0];
+            const name = threadType.getElementsByTagName("Name")[0]?.textContent || "ISO Metric profile";
+            const customName = threadType.getElementsByTagName("CustomName")[0]?.textContent || "ISO Metric profile";
+            // Assuming Name and CustomName are same initially
+            document.getElementById('profileNameInput').value = name; // or customName
+        };
+        reader.readAsText(file);
+    });
+
+    // Build the editor interface from XML data
+    function buildEditor(xml) {
+        const threadType = xml.getElementsByTagName("ThreadType")[0];
+        const angle = threadType.getElementsByTagName("Angle")[0]?.textContent || "";
+        const sizes = xml.getElementsByTagName("ThreadSize");
+
+        let editorHtml = `
+            <fieldset>
+                <legend>Thread Information</legend>
+                <label>Angle: <input type="text" id="angleInput" value="${angle}" /></label><br>
+                <h3>Sizes (Original vs Editable with Tolerance)</h3>
+        `;
+
+        // Initialize a counter to uniquely identify input fields
+        let inputCounter = 0;
+
+        for (let i = 0; i < sizes.length; i++) {
+            const size = sizes[i].getElementsByTagName("Size")[0]?.textContent || "";
+            const pitch = sizes[i].getElementsByTagName("Pitch")[0]?.textContent || "";
+
+            editorHtml += `
+                <fieldset>
+                    <legend>Size ${size}</legend>
+                    <table>
+                        <tr>
+                            <th>Field</th>
+                            <th>Original Value</th>
+                            <th>Editable Value</th>
+                            <th>Difference</th>
+                        </tr>
+                        <tr>
+                            <td>Size</td>
+                            <td>${size}</td>
+                            <td><input type="text" class="sizeInput" value="${size}" data-original="${size}" data-input-id="${inputCounter}" /></td>
+                            <td><span class="difference" data-input-id="${inputCounter}">0.0000</span></td>
+                        </tr>
+                        <tr>
+                            <td>Pitch</td>
+                            <td>${pitch}</td>
+                            <td><input type="text" class="pitchInput" value="${pitch}" data-original="${pitch}" data-input-id="${inputCounter + 1}" /></td>
+                            <td><span class="difference" data-input-id="${inputCounter + 1}">0.0000</span></td>
+                        </tr>
+                    </table>
+        `;
+            inputCounter += 2; // Increment by 2 as two fields added
+
+            const threads = sizes[i].getElementsByTagName("Thread");
+
+            for (let j = 0; j < threads.length; j++) {
+                const gender = threads[j].getElementsByTagName("Gender")[0]?.textContent || "";
+                const threadClass = threads[j].getElementsByTagName("Class")[0]?.textContent || "";
+                const majorDia = threads[j].getElementsByTagName("MajorDia")[0]?.textContent || "";
+                const pitchDia = threads[j].getElementsByTagName("PitchDia")[0]?.textContent || "";
+                const minorDia = threads[j].getElementsByTagName("MinorDia")[0]?.textContent || "";
+                const tapDrill = threads[j].getElementsByTagName("TapDrill")[0]?.textContent || '';
+
+                editorHtml += `
+                    <div class="thread-section">
+                        <h4>Thread (${gender}, Class ${threadClass})</h4>
+                        <table>
+                            <tr>
+                                <th>Field</th>
+                                <th>Original Value</th>
+                                <th>Editable Value</th>
+                                <th>Difference</th>
+                            </tr>
+                            <tr>
+                                <td>Gender</td>
+                                <td>${gender}</td>
+                                <td><input type="text" class="genderInput" value="${gender}" data-original="${gender}" data-input-id="${inputCounter}" readonly /></td>
+                                <td><span class="difference" data-input-id="${inputCounter}">0.0000</span></td>
+                            </tr>
+                            <tr>
+                                <td>Class</td>
+                                <td>${threadClass}</td>
+                                <td><input type="text" class="classInput" value="${threadClass}" data-original="${threadClass}" data-input-id="${inputCounter + 1}" /></td>
+                                <td><span class="difference" data-input-id="${inputCounter + 1}">0.0000</span></td>
+                            </tr>
+                            <tr>
+                                <td>Major Diameter</td>
+                                <td>${majorDia}</td>
+                                <td><input type="text" class="majorDiaInput" value="${majorDia}" data-original="${majorDia}" data-input-id="${inputCounter + 2}" /></td>
+                                <td><span class="difference" data-input-id="${inputCounter + 2}">0.0000</span></td>
+                            </tr>
+                            <tr>
+                                <td>Pitch Diameter</td>
+                                <td>${pitchDia}</td>
+                                <td><input type="text" class="pitchDiaInput" value="${pitchDia}" data-original="${pitchDia}" data-input-id="${inputCounter + 3}" /></td>
+                                <td><span class="difference" data-input-id="${inputCounter + 3}">0.0000</span></td>
+                            </tr>
+                            <tr>
+                                <td>Minor Diameter</td>
+                                <td>${minorDia}</td>
+                                <td><input type="text" class="minorDiaInput" value="${minorDia}" data-original="${minorDia}" data-input-id="${inputCounter + 4}" /></td>
+                                <td><span class="difference" data-input-id="${inputCounter + 4}">0.0000</span></td>
+                            </tr>
+                            ${tapDrill ? `
+                            <tr>
+                                <td>Tap Drill</td>
+                                <td>${tapDrill}</td>
+                                <td><input type="text" class="tapDrillInput" value="${tapDrill}" data-original="${tapDrill}" data-input-id="${inputCounter + 5}" /></td>
+                                <td><span class="difference" data-input-id="${inputCounter + 5}">0.0000</span></td>
+                            </tr>` : ''}
+                        </table>
+                    </div>
+                `;
+                inputCounter += tapDrill ? 6 : 5; // Increment based on whether Tap Drill exists
+            }
+
+            editorHtml += '</fieldset>'; // Close the Size fieldset
+        }
+
+        editorHtml += '</fieldset>'; // Close the main Thread Information fieldset
+
+        document.getElementById('editor').innerHTML = editorHtml;
+
+        // Add event listeners to update differences on input changes
+        addDifferenceListeners();
+    }
+
+    // Function to add event listeners for updating differences
+    function addDifferenceListeners() {
+        const editableInputs = document.querySelectorAll('.sizeInput, .pitchInput, .classInput, .majorDiaInput, .pitchDiaInput, .minorDiaInput, .tapDrillInput');
+
+        editableInputs.forEach(input => {
+            input.addEventListener('input', function () {
+                const inputId = this.getAttribute('data-input-id');
+                const originalValue = parseFloat(this.getAttribute('data-original')) || 0;
+                const currentValue = parseFloat(this.value) || 0;
+                const difference = (currentValue - originalValue).toFixed(4);
+
+                const differenceSpan = document.querySelector(`.difference[data-input-id="${inputId}"]`);
+                if (differenceSpan) {
+                    differenceSpan.textContent = difference;
+                }
+            });
+        });
+    }
+
+    // Apply tolerance when the button is clicked
+    document.getElementById('applyToleranceBtn').addEventListener('click', function () {
+        // Get the tolerance value entered by the user
+        toleranceValue = parseFloat(document.getElementById('toleranceInput').value);
+        if (isNaN(toleranceValue)) {
+            alert("Please enter a valid tolerance value in mm.");
+            return;
+        }
+
+        // Get all input elements related to diameters and gender
+        const majorDiaInputs = document.getElementsByClassName('majorDiaInput');
+        const pitchDiaInputs = document.getElementsByClassName('pitchDiaInput');
+        const minorDiaInputs = document.getElementsByClassName('minorDiaInput');
+        const genderInputs = document.getElementsByClassName('genderInput');
+
+        for (let i = 0; i < majorDiaInputs.length; i++) {
+            const gender = genderInputs[i].value.toLowerCase();
+
+            if (gender === "external") {
+                // External thread: decrease diameters by toleranceValue
+                applyToleranceToInput(majorDiaInputs[i], -toleranceValue);
+                applyToleranceToInput(pitchDiaInputs[i], -toleranceValue);
+                applyToleranceToInput(minorDiaInputs[i], -toleranceValue);
+            } else if (gender === "internal") {
+                // Internal thread: increase diameters by toleranceValue
+                applyToleranceToInput(majorDiaInputs[i], toleranceValue);
+                applyToleranceToInput(pitchDiaInputs[i], toleranceValue);
+                applyToleranceToInput(minorDiaInputs[i], toleranceValue);
+            }
+        }
+
+        // Update Profile Name with the tolerance value
+        const profileNameInput = document.getElementById('profileNameInput');
+        profileNameInput.value = `${profileNameInput.value} (Tolerance ${toleranceValue}mm)`;
+    });
+
+    // Function to apply tolerance and update differences
+    function applyToleranceToInput(inputElement, toleranceChange) {
+        const originalValue = parseFloat(inputElement.getAttribute('data-original')) || 0;
+        const newValue = (originalValue + toleranceChange).toFixed(4);
+        inputElement.value = newValue;
+
+        // Update difference
+        const inputId = inputElement.getAttribute('data-input-id');
+        const differenceSpan = document.querySelector(`.difference[data-input-id="${inputId}"]`);
+        if (differenceSpan) {
+            const difference = (newValue - originalValue).toFixed(4);
+            differenceSpan.textContent = difference;
+        }
+    }
+
+    // Reset to original values
+    document.getElementById('resetBtn').addEventListener('click', function () {
+        if (!originalXmlDoc) {
+            alert("No original data to reset.");
+            return;
+        }
+
+        // Reset xmlDoc to original
+        xmlDoc = originalXmlDoc.cloneNode(true);
+
+        // Rebuild the editor with original XML
+        buildEditor(xmlDoc);
+
+        // Reset the Profile Name input
+        const threadType = xmlDoc.getElementsByTagName("ThreadType")[0];
+        const name = threadType.getElementsByTagName("Name")[0]?.textContent || "ISO Metric profile";
+        document.getElementById('profileNameInput').value = name;
+
+        // Reset the tolerance input to default or desired value
+        document.getElementById('toleranceInput').value = "0.5";
+    });
+
+    // Save the updated XML
+    document.getElementById('saveBtn').addEventListener('click', function () {
+        if (!xmlDoc) {
+            alert("No XML data to save.");
+            return;
+        }
+
+        // Update the XML with the values from the form
+        const profileNameInput = document.getElementById('profileNameInput').value;
+        const angleInput = document.getElementById('angleInput').value;
+        const sizeInputs = document.getElementsByClassName('sizeInput');
+        const pitchInputs = document.getElementsByClassName('pitchInput');
+        const classInputs = document.getElementsByClassName('classInput');
+        const majorDiaInputs = document.getElementsByClassName('majorDiaInput');
+        const pitchDiaInputs = document.getElementsByClassName('pitchDiaInput');
+        const minorDiaInputs = document.getElementsByClassName('minorDiaInput');
+        const tapDrillInputs = document.getElementsByClassName('tapDrillInput');
+
+        // Update Name and CustomName
+        const threadType = xmlDoc.getElementsByTagName("ThreadType")[0];
+        threadType.getElementsByTagName("Name")[0].textContent = profileNameInput;
+        threadType.getElementsByTagName("CustomName")[0].textContent = profileNameInput;
+
+        // Update Angle
+        threadType.getElementsByTagName("Angle")[0].textContent = angleInput;
+
+        // Update ThreadSizes
+        const sizes = xmlDoc.getElementsByTagName("ThreadSize");
+        let inputIndex = 0;
+
+        for (let i = 0; i < sizes.length; i++) {
+            // Update Size and Pitch
+            sizes[i].getElementsByTagName("Size")[0].textContent = sizeInputs[i].value;
+            sizes[i].getElementsByTagName("Pitch")[0].textContent = pitchInputs[i].value;
+
+            const threads = sizes[i].getElementsByTagName("Thread");
+            for (let j = 0; j < threads.length; j++) {
+                // Update Class
+                const classInput = classInputs[inputIndex];
+                threads[j].getElementsByTagName("Class")[0].textContent = classInput.value;
+
+                // Update MajorDia, PitchDia, MinorDia
+                const majorDiaInput = majorDiaInputs[inputIndex];
+                const pitchDiaInput = pitchDiaInputs[inputIndex];
+                const minorDiaInput = minorDiaInputs[inputIndex];
+
+                threads[j].getElementsByTagName("MajorDia")[0].textContent = majorDiaInput.value;
+                threads[j].getElementsByTagName("PitchDia")[0].textContent = pitchDiaInput.value;
+                threads[j].getElementsByTagName("MinorDia")[0].textContent = minorDiaInput.value;
+
+                // Update TapDrill if exists
+                if (threads[j].getElementsByTagName("TapDrill").length > 0) {
+                    const tapDrillInput = tapDrillInputs[inputIndex];
+                    if (tapDrillInput) {
+                        threads[j].getElementsByTagName("TapDrill")[0].textContent = tapDrillInput.value;
+                    }
+                }
+
+                inputIndex++;
+            }
+        }
+
+        // Save the updated XML as a new file with the profile name in the filename
+        const serializer = new XMLSerializer();
+        const updatedXml = serializer.serializeToString(xmlDoc);
+        const sanitizedProfileName = profileNameInput.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const newFileName = `${sanitizedProfileName}_tolerance_${toleranceValue}mm.xml`;
+        downloadXmlFile(updatedXml, newFileName);
+    });
+
+    // Download the updated XML file
+    function downloadXmlFile(xmlContent, fileName) {
+        const blob = new Blob([xmlContent], { type: 'application/xml' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+</body>
+</html>
